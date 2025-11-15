@@ -172,7 +172,7 @@ def dfs(start, goal, R, C, order_spec=None, max_nodes=None):
         # We will not mark globally visited here to allow deeper paths, but to avoid infinite loops
         # we can use path-set
         path_set = set()
-        # generate successors in reverse order for stack LIFO so the first in order is popped first
+        # generate successors in reverse order for stack LIFO so the first in order is popped first 
         succs = gen_successors(state, R, C, order_spec)
         # push in reverse so first order is explored first
         for m, ns in reversed(succs):
