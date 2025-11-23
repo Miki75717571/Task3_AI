@@ -1,343 +1,104 @@
-#!/usr/bin/env python3
+# main.py
 import sys
 import argparse
-from collections import deque
-import heapq
-import random
-import time
+from state import goal_state
+from utils import read_input, is_solvable
+from heuristics import h_zero, h_misplaced, h_manhattan
+from search_bfs import bfs
+from search_dfs import dfs
+from search_iddfs import iddfs
+from search_bestfirst import best_first
+from search_astar import astar
+from search_sma import sma_star
 
-# ---------- utility: state representation ----------
-# Representujemy stan jako 1D tuple długości R*C, gdzie 0 = pusta
-# indeksy: row * C + col
-
-def read_input():
-    R, C = 4, 4         
-    data = sys.stdin.read().strip().split()
-
-    if not data:
-        print("No input", file=sys.stderr)
-        sys.exit(1)
-
-    # oczekujemy 16 wartości
-    if len(data) != 16:
-        print(f"Error: expected 16 numbers, got {len(data)}", file=sys.stderr)
-        sys.exit(1)
-
-    arr = list(map(int, data))
-    return R, C, tuple(arr)
-
-
-def idx_to_rc(idx, C):
-    return divmod(idx, C)
-
-def rc_to_idx(r, c, C):
-    return r * C + c
-
-def goal_state(R, C):
-    # last cell is 0
-    vals = list(range(1, R*C))
-    vals.append(0)
-    return tuple(vals)
-
-# ---------- moves generation ----------
-MOVES = {
-    'U': (-1, 0),
-    'D': (1, 0),
-    'L': (0, -1),
-    'R': (0, 1)
-}
-
-def gen_successors(state, R, C, order_spec):
-    """Zwraca listę (move_char, new_state) zgodnie z order_spec.
-       Jeśli order_spec zaczyna się od 'R' => randomizujemy kolejność dla każdego węzła.
-    """
-    zero_idx = state.index(0)
-    zr, zc = idx_to_rc(zero_idx, C)
-    # compute order
-    if order_spec and order_spec[0] == 'R':
-        order = ['L','R','U','D']
-        random.shuffle(order)
+def get_heuristic_fn(heuristic_id):
+    """Zwraca funkcję heurystyczną na podstawie ID."""
+    if heuristic_id == '0':
+        return h_zero
+    elif heuristic_id == 'misplaced':
+        return h_misplaced
+    elif heuristic_id == 'manhattan':
+        return h_manhattan
     else:
-        if order_spec:
-            order = list(order_spec)
-        else:
-            order = ['L','R','U','D']
-    succ = []
-    for m in order:
-        dr, dc = MOVES[m]
-        nr, nc = zr + dr, zc + dc
-        if 0 <= nr < R and 0 <= nc < C:
-            nidx = rc_to_idx(nr, nc, C)
-            lst = list(state)
-            # swap zero with target tile (we move tile into zero => char means tile move)
-            lst[zero_idx], lst[nidx] = lst[nidx], lst[zero_idx]
-            succ.append((m, tuple(lst)))
-    return succ
+        # Możesz rozszerzyć to o bardziej zaawansowane heurystyki
+        raise ValueError(f"Nieznany identyfikator heurystyki: {heuristic_id}. Użyj '0', 'misplaced', lub 'manhattan'.")
 
-# ---------- solvability check (generalized for R*C) ----------
-# For 15-puzzle (4x4): state solvable iff (inversion_count + row_of_blank_from_bottom) % 2 == target parity
-def inversion_count(state, R, C):
-    arr = [x for x in state if x != 0]
-    inv = 0
-    for i in range(len(arr)):
-        for j in range(i+1, len(arr)):
-            if arr[i] > arr[j]:
-                inv += 1
-    return inv
+def get_goal_pos(goal):
+    """Tworzy słownik mapujący wartość płytki na jej docelową pozycję (indeks)."""
+    return {val: idx for idx, val in enumerate(goal)}
 
-def is_solvable(state, R, C, goal=None):
-    inv = inversion_count(state, R, C)
-    if C % 2 == 1:
-        # odd width: solvable iff inversions parity equals goal parity
-        if goal is None:
-            return inv % 2 == 0
-        else:
-            return (inv % 2) == (inversion_count(goal, R, C) % 2)
-    else:
-        # even width: blank row from bottom matters
-        zr, zc = idx_to_rc(state.index(0), C)
-        blank_row_from_bottom = R - zr
-        if goal is None:
-            return (inv + blank_row_from_bottom) % 2 == 0
-        else:
-            g_inv = inversion_count(goal, R, C)
-            gr, gc = idx_to_rc(goal.index(0), C)
-            g_blank_row_from_bottom = R - gr
-            return ((inv + blank_row_from_bottom) % 2) == ((g_inv + g_blank_row_from_bottom) % 2)
-
-# ---------- heuristics ----------
-def h_zero(state, R, C, goal_pos):
-    return 0
-
-def h_misplaced(state, R, C, goal_pos):
-    count = 0
-    for idx, val in enumerate(state):
-        if val != 0:
-            goal_idx = goal_pos[val]
-            if goal_idx != idx:
-                count += 1
-    return count
-
-def h_manhattan(state, R, C, goal_pos):
-    s = 0
-    for idx, val in enumerate(state):
-        if val != 0:
-            gr, gc = idx_to_rc(goal_pos[val], C)
-            r, c = idx_to_rc(idx, C)
-            s += abs(r - gr) + abs(c - gc)
-    return s
-
-# prepare goal pos map: val -> index
-def make_goal_pos_map(goal):
-    pos = {}
-    for idx, val in enumerate(goal):
-        if val != 0:
-            pos[val] = idx
-    return pos
-
-# ---------- search algorithms ----------
-def bfs(start, goal, R, C, order_spec=None, max_nodes=None):
-    if start == goal:
-        return []
-    q = deque()
-    q.append((start, ""))  # state, path
-    visited = {start}
-    nodes = 0
-    while q:
-        state, path = q.popleft()
-        nodes += 1
-        if max_nodes and nodes > max_nodes:
-            return None
-        for m, ns in gen_successors(state, R, C, order_spec):
-            if ns in visited:
-                continue
-            if ns == goal:
-                return path + m
-            visited.add(ns)
-            q.append((ns, path + m))
-    return None
-
-def dfs(start, goal, R, C, order_spec=None, max_nodes=None):
-    # Depth-first with visited-per-path (to avoid cycles). Non-iterative limitless DFS.
-    nodes = 0
-    visited_global = set()
-    stack = [(start, "")]  # iterative stack (LIFO)
-    while stack:
-        state, path = stack.pop()
-        nodes += 1
-        if max_nodes and nodes > max_nodes:
-            return None
-        if state == goal:
-            return path
-        # We will not mark globally visited here to allow deeper paths, but to avoid infinite loops
-        # we can use path-set
-        path_set = set()
-        # generate successors in reverse order for stack LIFO so the first in order is popped first 
-        succs = gen_successors(state, R, C, order_spec)
-        # push in reverse so first order is explored first
-        for m, ns in reversed(succs):
-            # avoid immediate cycle with parent by checking last move inverted
-            # better: check if ns appears in path by reconstructing states from path (costly)
-            # approximate: maintain global visited to prune repeated states
-            if ns in visited_global:
-                continue
-            stack.append((ns, path + m))
-        visited_global.add(state)
-    return None
-
-def iddfs(start, goal, R, C, order_spec=None, max_depth=50, max_nodes=None):
-    # iterative deepening DFS
-    def dls(state, goal, depth, path, visited_set):
-        nonlocal nodes
-        nodes += 1
-        if max_nodes and nodes > max_nodes:
-            return None, True
-        if state == goal:
-            return path, True
-        if depth == 0:
-            return None, False
-        cutoff_occurred = False
-        for m, ns in gen_successors(state, R, C, order_spec):
-            if ns in visited_set:
-                continue
-            visited_set.add(ns)
-            res, finished = dls(ns, goal, depth-1, path + m, visited_set)
-            visited_set.remove(ns)
-            if finished:
-                return res, True
-            if res is None:
-                cutoff_occurred = True
-        return None, False if not cutoff_occurred else (None, False)
-    nodes = 0
-    for depth in range(max_depth+1):
-        visited = {start}
-        res, finished = dls(start, goal, depth, "", visited)
-        if res is not None:
-            return res
-    return None
-
-def best_first(start, goal, R, C, heur_fn, goal_pos, order_spec=None, max_nodes=None):
-    if start == goal:
-        return []
-    nodes = 0
-    heap = []
-    # priority by h only
-    h0 = heur_fn(start, R, C, goal_pos)
-    heapq.heappush(heap, (h0, 0, start, ""))  # (priority, tie-breaker, state, path)
-    visited = set()
-    tie = 0
-    while heap:
-        hval, _, state, path = heapq.heappop(heap)
-        nodes += 1
-        if max_nodes and nodes > max_nodes:
-            return None
-        if state == goal:
-            return path
-        if state in visited:
-            continue
-        visited.add(state)
-        for m, ns in gen_successors(state, R, C, order_spec):
-            if ns in visited:
-                continue
-            tie += 1
-            hv = heur_fn(ns, R, C, goal_pos)
-            heapq.heappush(heap, (hv, tie, ns, path + m))
-    return None
-
-def astar(start, goal, R, C, heur_fn, goal_pos, order_spec=None, max_nodes=None):
-    if start == goal:
-        return []
-    nodes = 0
-    open_heap = []
-    g_scores = {start: 0}
-    f0 = heur_fn(start, R, C, goal_pos)
-    heapq.heappush(open_heap, (f0, 0, start, ""))  # (f, tie, state, path)
-    closed = {}
-    tie = 0
-    while open_heap:
-        f, _, state, path = heapq.heappop(open_heap)
-        nodes += 1
-        if max_nodes and nodes > max_nodes:
-            return None
-        if state == goal:
-            return path
-        g = g_scores.get(state, float('inf'))
-        # If we've seen a better g before, skip
-        if state in closed and closed[state] <= g:
-            continue
-        closed[state] = g
-        for m, ns in gen_successors(state, R, C, order_spec):
-            tentative_g = g + 1
-            if ns in closed and tentative_g >= closed.get(ns, float('inf')):
-                continue
-            if tentative_g < g_scores.get(ns, float('inf')):
-                g_scores[ns] = tentative_g
-                tie += 1
-                fscore = tentative_g + heur_fn(ns, R, C, goal_pos)
-                heapq.heappush(open_heap, (fscore, tie, ns, path + m))
-    return None
-
-# ---------- main CLI and dispatch ----------
 def main():
-    parser = argparse.ArgumentParser(description="15-puzzle solver (supports BFS, DFS, IDDFS, Best-first, A*)")
+    """Główna funkcja programu do rozwiązywania łamigłówki 15."""
+    
+    # 1. Parsowanie Argumentów Wiersza Poleceń
+    parser = argparse.ArgumentParser(description="Program rozwiązujący łamigłówkę 15 za pomocą różnych strategii przeszukiwania.")
+    
+    # Grupa wzajemnie wykluczających się argumentów dla wyboru strategii
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-b','--bfs', metavar='ORDER', help="Breadth-first search order (e.g. DULR or R... for random)")
-    group.add_argument('-d','--dfs', metavar='ORDER', help="Depth-first search order")
-    group.add_argument('-i','--idfs', metavar='ORDER', help="Iterative deepening DFS order")
-    group.add_argument('-he','--bf', metavar='HEUR', help="Best-first using heuristic (manhattan|misplaced|zero)")
-    group.add_argument('-a','--astar', metavar='HEUR', help="A* using heuristic (manhattan|misplaced|zero)")
-    parser.add_argument('--max_nodes', type=int, default=1000000, help="Optional limit on number of expanded nodes")
-    parser.add_argument('--max_depth', type=int, default=50, help="Max depth for IDDFS")
+    group.add_argument('-b', '--bfs', type=str, metavar='order', help="Breadth-first search. 'order' definiuje kolejność następców (np. DULR).")
+    group.add_argument('-d', '--dfs', type=str, metavar='order', help="Depth-first search. 'order' definiuje kolejność następców (np. DULR).")
+    group.add_argument('-i', '--idfs', type=str, metavar='order', help="Iterative deepenening DFS. 'order' definiuje kolejność następców (np. DULR).")
+    group.add_argument('-f', '--bf', type=str, metavar='id_of_heuristic', help="Best-first search. 'id_of_heuristic' to id heurystyki.")   
+    group.add_argument('-a', '--astar', type=str, metavar='id_of_heuristic', help="A* search. 'id_of_heuristic' to id heurystyki.")
+    group.add_argument('-s', '--sma', type=str, metavar='id_of_heuristic', help="SMA* search. 'id_of_heuristic' to id heurystyki.")
+    
+    # Argumenty opcjonalne dla Best-first, A*, SMA*
+    parser.add_argument('--max-nodes', type=int, default=None, help="Maksymalna liczba węzłów do rozwinięcia (opcjonalne).")
+    parser.add_argument('--max-depth', type=int, default=50, help="Maksymalna głębokość dla IDFS (domyślnie 50).")
+    parser.add_argument('--max-memory', type=int, default=10000, help="Maksymalny limit pamięci dla SMA* (domyślnie 10000).")
+    
     args = parser.parse_args()
 
-    R, C, start = read_input()
-    goal = goal_state(R, C)
-    if not is_solvable(start, R, C, goal):
-        # print output format: -1 and empty second line
-        print(-1)
+    # 2. Wczytanie Danych
+    R, C, start_state = read_input()
+    goal_state_tuple = goal_state(R, C)
+    goal_pos = get_goal_pos(goal_state_tuple)
+
+    # 3. Sprawdzenie Rozwiązywalności
+    if not is_solvable(start_state, R, C, goal_state_tuple):
+        print("0")
         print("")
+        print("Puzzle nie jest rozwiązywalne!")
         return
 
-    # heuristics map
-    goal_pos = make_goal_pos_map(goal)
-    heur_map = {
-        'manhattan': lambda s, R_, C_, gp: h_manhattan(s, R_, C_, gp),
-        'misplaced': lambda s, R_, C_, gp: h_misplaced(s, R_, C_, gp),
-        'zero': lambda s, R_, C_, gp: h_zero(s, R_, C_, gp)
-    }
+    # 4. Wybór i Uruchomienie Strategii
+    
+    solution_path = None
+    
+    if args.bfs:
+        print(f"Uruchamiam BFS z kolejnością: {args.bfs}", file=sys.stderr)
+        solution_path = bfs(start_state, goal_state_tuple, R, C, args.bfs, args.max_nodes)
 
-    # dispatch based on args
-    start_time = time.time()
-    solution = None
-    if args.bfs is not None:
-        order = args.bfs
-        solution = bfs(start, goal, R, C, order_spec=order, max_nodes=args.max_nodes)
-    elif args.dfs is not None:
-        order = args.dfs
-        solution = dfs(start, goal, R, C, order_spec=order, max_nodes=args.max_nodes)
-    elif args.idfs is not None:
-        order = args.idfs
-        solution = iddfs(start, goal, R, C, order_spec=order, max_depth=args.max_depth, max_nodes=args.max_nodes)
-    elif args.bf is not None:
-        heur = args.bf
-        if heur not in heur_map:
-            print("Unknown heuristic", file=sys.stderr); sys.exit(1)
-        solution = best_first(start, goal, R, C, heur_map[heur], goal_pos, order_spec=None, max_nodes=args.max_nodes)
-    elif args.astar is not None:
-        heur = args.astar
-        if heur not in heur_map:
-            print("Unknown heuristic", file=sys.stderr); sys.exit(1)
-        solution = astar(start, goal, R, C, heur_map[heur], goal_pos, order_spec=None, max_nodes=args.max_nodes)
-    end_time = time.time()
+    elif args.dfs:
+        print(f"Uruchamiam DFS z kolejnością: {args.dfs}", file=sys.stderr)
+        solution_path = dfs(start_state, goal_state_tuple, R, C, args.dfs, args.max_nodes)
 
-    if solution is None:
-        print(-1)
-        print("")
+    elif args.idfs:
+        print(f"Uruchamiam IDFS z kolejnością: {args.idfs}, Max głębokość: {args.max_depth}", file=sys.stderr)
+        solution_path = iddfs(start_state, goal_state_tuple, R, C, args.idfs, args.max_depth, args.max_nodes)
+
+    elif args.bf:
+        heur_fn = get_heuristic_fn(args.bf)
+        print(f"Uruchamiam Best-First z heurystyką: {args.bf}", file=sys.stderr)
+        solution_path = best_first(start_state, goal_state_tuple, R, C, heur_fn, goal_pos, None, args.max_nodes)
+
+    elif args.astar:
+        heur_fn = get_heuristic_fn(args.astar)
+        print(f"Uruchamiam A* z heurystyką: {args.astar}", file=sys.stderr)
+        solution_path = astar(start_state, goal_state_tuple, R, C, heur_fn, goal_pos, None, args.max_nodes)
+        
+    elif args.sma:
+        heur_fn = get_heuristic_fn(args.sma)
+        print(f"Uruchamiam SMA* z heurystyką: {args.sma}, Max pamięć: {args.max_memory}", file=sys.stderr)
+        solution_path = sma_star(start_state, goal_state_tuple, R, C, heur_fn, goal_pos, None, args.max_nodes, args.max_memory)
+        
+    # 5. Wypisanie Wyniku
+    if solution_path is not None:
+        print(len(solution_path))
+        print(solution_path)
     else:
-        print(len(solution))
-        print(solution)
-    # optional diagnostic
-    # print(f"# time: {end_time - start_time:.3f}s", file=sys.stderr)
+        print("-1")
+        print("")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
