@@ -16,7 +16,7 @@ def get_heuristic_fn(heuristic_id):
     """Zwraca funkcję heurystyczną na podstawie ID."""
     if heuristic_id == '0':
         return h_zero
-    elif heuristic_id == 'misplaced':
+    elif heuristic_id == '':
         return h_misplaced
     elif heuristic_id == 'manhattan':
         return h_manhattan
