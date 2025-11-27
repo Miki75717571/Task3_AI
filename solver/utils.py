@@ -83,3 +83,29 @@ def is_solvable(state, R, C, goal=None):
             gr, _ = idx_to_rc(goal.index(0), C)
             g_blank_row_from_bottom = R - gr
             return ((inv + blank_row_from_bottom) % 2) == ((g_inv + g_blank_row_from_bottom) % 2)
+
+
+def generate_shuffled(goal_state, R, C, moves):
+    """Generuje stan przez wykonanie dokładnie `moves` losowych ruchów zaczynając od `goal_state`.
+
+    Zwraca krotkę (shuffled_state, move_sequence) gdzie move_sequence to list of move chars.
+    Zapobiegamy natychmiastowemu cofnięciu ruchu wybierając losowy następcę, ale unikając odwrotności poprzedniego ruchu.
+    """
+    state = list(goal_state)
+    prev_move = None
+    seq = []
+    inverse = {'L': 'R', 'R': 'L', 'U': 'D', 'D': 'U'}
+
+    for _ in range(moves):
+        succ = gen_successors(tuple(state), R, C, order_spec='R')
+        # succ is list of (move_char, state_tuple)
+        # filtrowanie cofnięć
+        filtered = [s for s in succ if prev_move is None or s[0] != inverse.get(prev_move)]
+        if not filtered:
+            filtered = succ
+        move, new_state = random.choice(filtered)
+        state = list(new_state)
+        seq.append(move)
+        prev_move = move
+
+    return tuple(state), seq

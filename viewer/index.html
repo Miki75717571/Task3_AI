@@ -3,9 +3,56 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>15-Puzzle Viewer</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; margin: 16px; }
+        .controls { margin-bottom: 12px; }
+        textarea { width: 100%; height: 80px; font-family: monospace; }
+        #grid { display: inline-grid; gap: 6px; margin-top: 12px; }
+        .cell { width: 60px; height: 60px; display:flex; align-items:center; justify-content:center; background:#eee; font-weight:600; border-radius:6px; }
+        .cell.blank { background:#333; color:#fff; }
+        .toolbar { margin-top:12px; }
+        .small { width:60px; }
+    </style>
 </head>
 <body>
-    
+    <h2>15-Puzzle Viewer</h2>
+
+    <div>
+        <label><strong>Initial input (stdin format)</strong> — first line: R C, then R lines of C numbers (0 = blank)</label>
+        <textarea id="initialInput" placeholder="4 4\n1 2 3 4\n5 6 7 8\n9 10 11 12\n13 14 15 0"></textarea>
+    </div>
+
+    <div style="margin-top:8px;">
+        <label><strong>Solver output</strong> — first line: n (length), second line: moves string (e.g. DULR...)</label>
+        <textarea id="solverOutput" placeholder="0\n"></textarea>
+    </div>
+
+    <div class="controls">
+        <button id="loadBtn">Load</button>
+        <button id="resetBtn">Reset</button>
+        <label style="margin-left:12px">Or load viewer JSON file:</label>
+        <input id="fileIn" type="file" accept="application/json">
+        <label style="margin-left:8px">Speed:</label>
+        <select id="speed">
+            <option value="600">Slow</option>
+            <option value="300">Normal</option>
+            <option value="120">Fast</option>
+        </select>
+    </div>
+
+    <div class="toolbar">
+        <button id="prevBtn">◀ Prev</button>
+        <button id="playBtn">► Play</button>
+        <button id="nextBtn">Next ▶</button>
+        <label style="margin-left:12px">Jump to:</label>
+        <input id="jumpIdx" class="small" type="number" min="0" value="0">
+        <button id="jumpBtn">Go</button>
+        <span id="status" style="margin-left:12px"></span>
+    </div>
+
+    <div id="grid" aria-live="polite"></div>
+
+    <script src="viewer.js"></script>
 </body>
 </html>
